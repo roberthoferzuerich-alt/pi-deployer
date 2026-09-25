@@ -400,6 +400,90 @@
 
         </div>
 
+        <!-- Nginx Generic Configuration Generator Section -->
+        <div class="glass-card rounded-2xl p-6 space-y-6">
+            <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800/80 pb-4">
+                <div class="space-y-1">
+                    <h3 class="text-lg font-bold text-white flex items-center gap-2">
+                        <i class="fa-solid fa-server text-purple-400"></i>
+                        <span>Generischer Nginx Server-Block Generator</span>
+                    </h3>
+                    <p class="text-xs text-slate-400">
+                        Erstellt eine maßgeschneiderte, sichere Nginx-Serverkonfiguration für den Raspberry Pi 5.
+                    </p>
+                </div>
+                <div class="flex items-center space-x-2 bg-slate-950/80 px-3 py-1.5 rounded-xl border border-purple-500/30 text-xs font-mono">
+                    <span class="text-slate-400">Dateiname:</span>
+                    <span id="nginxFilenamePreview" class="text-purple-300 font-bold">{{ $nginxGenerated['filename'] }}</span>
+                </div>
+            </div>
+
+            <!-- Input Controls Grid -->
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4 text-xs">
+                <div>
+                    <label class="block text-slate-400 font-medium mb-1">App-Name / Slug</label>
+                    <input type="text" id="nginxAppName" value="pi-deployer" oninput="generateNginxConfig()" class="w-full px-3 py-2 bg-slate-950 rounded-xl border border-slate-800 text-purple-300 font-mono focus:outline-none focus:border-purple-400">
+                </div>
+                <div>
+                    <label class="block text-slate-400 font-medium mb-1">Port</label>
+                    <input type="number" id="nginxPort" value="8445" oninput="generateNginxConfig()" class="w-full px-3 py-2 bg-slate-950 rounded-xl border border-slate-800 text-emerald-400 font-mono focus:outline-none focus:border-purple-400">
+                </div>
+                <div>
+                    <label class="block text-slate-400 font-medium mb-1">Server Name (Domain/IP)</label>
+                    <input type="text" id="nginxServerName" value="rhz.internet-box.ch" oninput="generateNginxConfig()" class="w-full px-3 py-2 bg-slate-950 rounded-xl border border-slate-800 text-cyan-300 font-mono focus:outline-none focus:border-purple-400">
+                </div>
+                <div>
+                    <label class="block text-slate-400 font-medium mb-1">PHP Version</label>
+                    <select id="nginxPhpVersion" onchange="generateNginxConfig()" class="w-full px-3 py-2 bg-slate-950 rounded-xl border border-slate-800 text-emerald-400 font-mono focus:outline-none focus:border-purple-400">
+                        <option value="8.4" selected>PHP 8.4 (/run/php/php8.4-fpm.sock)</option>
+                        <option value="8.3">PHP 8.3 (/run/php/php8.3-fpm.sock)</option>
+                        <option value="8.2">PHP 8.2 (/run/php/php8.2-fpm.sock)</option>
+                        <option value="8.1">PHP 8.1 (/run/php/php8.1-fpm.sock)</option>
+                    </select>
+                </div>
+                <div class="md:col-span-3">
+                    <label class="block text-slate-400 font-medium mb-1">Projekt Root-Pfad</label>
+                    <input type="text" id="nginxRootPath" value="{{ $targetPath }}" oninput="generateNginxConfig()" class="w-full px-3 py-2 bg-slate-950 rounded-xl border border-slate-800 text-amber-300 font-mono focus:outline-none focus:border-purple-400">
+                </div>
+                <div class="flex items-center pt-5">
+                    <label class="inline-flex items-center cursor-pointer space-x-2 text-xs text-slate-300 font-medium">
+                        <input type="checkbox" id="nginxSslEnabled" checked onchange="generateNginxConfig()" class="w-4 h-4 rounded bg-slate-950 border-slate-800 text-purple-500 focus:ring-0">
+                        <span>SSL Verschlüsselung aktivieren</span>
+                    </label>
+                </div>
+            </div>
+
+            <!-- Code Preview & Target Path -->
+            <div class="space-y-3 pt-2">
+                <div class="flex items-center justify-between text-xs">
+                    <span class="text-slate-400 font-mono flex items-center gap-1.5">
+                        <i class="fa-regular fa-file-code text-purple-400"></i>
+                        <span>Ziel-Datei auf dem Pi:</span>
+                        <code id="nginxSitesAvailablePath" class="text-purple-300 font-bold">{{ $nginxGenerated['sites_available_path'] }}</code>
+                    </span>
+                    <button onclick="copyNginxConfig()" class="btn-action px-3 py-1.5 rounded-lg bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 border border-purple-500/30 transition flex items-center gap-1.5">
+                        <i class="fa-regular fa-copy"></i> Konfiguration kopieren
+                    </button>
+                </div>
+
+                <pre id="nginxConfigDisplay" class="bg-slate-950 text-cyan-300 font-mono text-xs p-4 rounded-xl border border-slate-800 overflow-x-auto whitespace-pre leading-relaxed select-all max-h-80">{{ $nginxGenerated['config'] }}</pre>
+            </div>
+
+            <!-- Setup Commands for Raspberry Pi -->
+            <div class="space-y-2 pt-2 border-t border-slate-800/80">
+                <div class="flex items-center justify-between text-xs">
+                    <span class="text-slate-400 font-semibold flex items-center gap-1.5">
+                        <i class="fa-solid fa-terminal text-emerald-400"></i>
+                        <span>Befehle zur Aktivierung auf dem Raspberry Pi:</span>
+                    </span>
+                    <button onclick="copyNginxCommands()" class="btn-action px-3 py-1 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/30 transition flex items-center gap-1.5 text-xs">
+                        <i class="fa-regular fa-copy"></i> Befehle kopieren
+                    </button>
+                </div>
+                <pre id="nginxCommandsDisplay" class="bg-slate-950 text-emerald-400 font-mono text-xs p-3 rounded-xl border border-slate-800 overflow-x-auto whitespace-pre select-all">{{ $nginxGenerated['setup_commands'] }}</pre>
+            </div>
+        </div>
+
         <!-- Terminal Output Window -->
         <div class="glass-card rounded-2xl p-6 space-y-4">
             <div class="flex items-center justify-between">
@@ -554,6 +638,47 @@
                 body: JSON.stringify(data)
             });
             return await res.json();
+        }
+
+        async function generateNginxConfig() {
+            const appName = document.getElementById('nginxAppName').value || 'pi-deployer';
+            const port = document.getElementById('nginxPort').value || '8445';
+            const serverName = document.getElementById('nginxServerName').value || 'rhz.internet-box.ch';
+            const rootPath = document.getElementById('nginxRootPath').value || '/var/www/pi-deployer/public';
+            const phpVersion = document.getElementById('nginxPhpVersion').value || '8.4';
+            const sslEnabled = document.getElementById('nginxSslEnabled').checked;
+
+            try {
+                const res = await post('/pi-deploy/api/generate-nginx', {
+                    app_name: appName,
+                    port: port,
+                    server_name: serverName,
+                    root_path: rootPath,
+                    php_version: phpVersion,
+                    ssl_enabled: sslEnabled
+                });
+
+                if (res.success) {
+                    document.getElementById('nginxFilenamePreview').innerText = res.filename;
+                    document.getElementById('nginxSitesAvailablePath').innerText = res.sites_available_path;
+                    document.getElementById('nginxConfigDisplay').innerText = res.config;
+                    document.getElementById('nginxCommandsDisplay').innerText = res.setup_commands;
+                }
+            } catch (err) {
+                console.error('Nginx generator error:', err);
+            }
+        }
+
+        function copyNginxConfig() {
+            const text = document.getElementById('nginxConfigDisplay').innerText;
+            navigator.clipboard.writeText(text);
+            log('✓ Nginx-Konfiguration in die Zwischenablage kopiert!', 'info');
+        }
+
+        function copyNginxCommands() {
+            const text = document.getElementById('nginxCommandsDisplay').innerText;
+            navigator.clipboard.writeText(text);
+            log('✓ Nginx Setup-Befehle in die Zwischenablage kopiert!', 'info');
         }
 
         async function runAudit(event) {

@@ -6,6 +6,7 @@ use App\PiDeployer\Services\ComposerService;
 use App\PiDeployer\Services\DatabaseMigrationService;
 use App\PiDeployer\Services\EnvironmentService;
 use App\PiDeployer\Services\GitService;
+use App\PiDeployer\Services\NginxService;
 use App\PiDeployer\Services\OptimizationService;
 use App\PiDeployer\Services\SystemCheckerService;
 use Illuminate\Http\JsonResponse;
@@ -18,14 +19,29 @@ class PiDeployerController extends Controller
         Request $request,
         SystemCheckerService $systemChecker,
         GitService $gitService,
-        EnvironmentService $envService
+        EnvironmentService $envService,
+        NginxService $nginxService
     ): View {
         $targetPath = $request->input('target_path') ?: config('pi-deployer.target_path', base_path());
         $audit = $systemChecker->audit($targetPath);
         $gitStatus = $gitService->getStatus($targetPath);
         $envData = $envService->getEnvironmentData($targetPath);
+        $nginxGenerated = $nginxService->generateConfig([
+            'app_name' => basename($targetPath),
+            'port' => 8445,
+            'server_name' => 'rhz.internet-box.ch',
+            'root_path' => $targetPath,
+            'php_version' => substr(PHP_VERSION, 0, 3),
+        ]);
 
-        return view('pi-deployer.index', compact('audit', 'gitStatus', 'envData', 'targetPath'));
+        return view('pi-deployer.index', compact('audit', 'gitStatus', 'envData', 'targetPath', 'nginxGenerated'));
+    }
+
+    public function generateNginx(Request $request, NginxService $nginxService): JsonResponse
+    {
+        $params = $request->only(['app_name', 'port', 'server_name', 'root_path', 'php_version', 'ssl_enabled', 'cert_path', 'key_path']);
+
+        return response()->json($nginxService->generateConfig($params));
     }
 
     public function audit(

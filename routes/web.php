@@ -21,4 +21,5 @@ Route::prefix(config('pi-deployer.route_prefix', 'pi-deploy'))
         Route::post('/api/run-migrations', [PiDeployerController::class, 'runMigrations'])->name('pi-deployer.run-migrations');
         Route::post('/api/run-seeders', [PiDeployerController::class, 'runSeeders'])->name('pi-deployer.run-seeders');
         Route::post('/api/optimize', [PiDeployerController::class, 'optimize'])->name('pi-deployer.optimize');
+        Route::post('/api/generate-nginx', [PiDeployerController::class, 'generateNginx'])->name('pi-deployer.generate-nginx');
     });

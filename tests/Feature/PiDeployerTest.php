@@ -94,4 +94,27 @@ class PiDeployerTest extends TestCase
         $response->assertStatus(200);
         $response->assertJson(['success' => false]);
     }
+
+    /**
+     * Test generic Nginx generator API endpoint.
+     */
+    public function test_generate_nginx_api_endpoint(): void
+    {
+        $response = $this->withoutMiddleware()
+            ->postJson('/pi-deploy/api/generate-nginx', [
+                'app_name' => 'chatconnect',
+                'port' => 8443,
+                'server_name' => 'rhz.internet-box.ch',
+                'root_path' => '/var/www/chatconnect',
+                'php_version' => '8.4',
+                'ssl_enabled' => true,
+            ]);
+
+        $response->assertStatus(200);
+        $response->assertJson([
+            'success' => true,
+            'filename' => 'chatconnect_8443',
+            'sites_available_path' => '/etc/nginx/sites-available/chatconnect_8443',
+        ]);
+    }
 }
