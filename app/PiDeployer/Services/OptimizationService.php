@@ -2,26 +2,28 @@
 
 namespace App\PiDeployer\Services;
 
+use App\PiDeployer\Services\Concerns\ResolvesTargetPath;
 use Illuminate\Support\Facades\Artisan;
 use Symfony\Component\Process\Process;
 use Throwable;
 
 class OptimizationService
 {
-    protected function resolvePath(?string $targetPath = null): string
-    {
-        if (! empty($targetPath) && is_dir($targetPath)) {
-            return rtrim($targetPath, '/\\');
-        }
-
-        return config('pi-deployer.target_path', base_path());
-    }
+    use ResolvesTargetPath;
 
     protected function executeArtisan(string $command, array $params = [], ?string $targetPath = null): array
     {
-        $base = $this->resolvePath($targetPath);
+        $validated = $this->resolveAndValidatePath($targetPath);
+        if (! $validated['valid']) {
+            return [
+                'success' => false,
+                'output' => $validated['error'],
+            ];
+        }
 
-        if (rtrim($base, '/\\') === rtrim(base_path(), '/\\')) {
+        $base = $validated['path'];
+
+        if (rtrim(realpath($base) ?: $base, '/\\') === rtrim(realpath(base_path()) ?: base_path(), '/\\')) {
             $exitCode = Artisan::call($command, $params);
 
             return [

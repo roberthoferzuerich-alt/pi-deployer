@@ -17,7 +17,9 @@ return [
 
     'middleware' => ['web'],
 
-    'target_path' => env('PI_TARGET_PROJECT_PATH', base_path()),
+    'target_path' => env('PI_TARGET_PROJECT_PATH', null),
+
+    'allow_self_deploy' => env('PI_ALLOW_SELF_DEPLOY', false),
 
     'raspberry_pi' => [
         'device_name' => env('PI_DEVICE_NAME', 'Raspberry Pi 5 Pironman (16GB)'),
@@ -62,5 +64,10 @@ return [
 
     'seeders' => [
         'default_class' => 'DatabaseSeeder',
+    ],
+
+    'database' => [
+        'admin_username' => env('PI_DB_ADMIN_USER', 'root'),
+        'admin_password' => env('PI_DB_ADMIN_PASSWORD', 'A67d201#'),
     ],
 ];

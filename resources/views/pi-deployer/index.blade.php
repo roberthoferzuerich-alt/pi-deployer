@@ -133,7 +133,7 @@
                     <label class="text-[11px] text-purple-300 font-semibold flex items-center gap-1.5">
                         <i class="fa-solid fa-folder-open text-purple-400"></i> Ziel-Projektpfad:
                     </label>
-                    <input type="text" id="targetProjectPath" value="{{ $targetPath }}" onchange="runAudit()" placeholder="z.B. C:\laragon\www\pi-demo oder /var/www/pi-demo" class="px-2.5 py-1 bg-slate-900 text-xs rounded-lg border border-slate-800 text-emerald-300 font-mono w-64 md:w-80 focus:outline-none focus:border-purple-400" title="Pfad des Ziel-Laravel-Projekts auf dem Server">
+                    <input type="text" id="targetProjectPath" value="{{ $targetPath }}" oninput="onTargetPathChange(event)" onchange="onTargetPathChange(event)" onblur="onTargetPathChange(event)" placeholder="z.B. C:\laragon\www\pi-demo oder /var/www/pi-demo" class="px-2.5 py-1 bg-slate-900 text-xs rounded-lg border border-slate-800 text-emerald-300 font-mono w-64 md:w-80 focus:outline-none focus:border-purple-400" title="Pfad des Ziel-Laravel-Projekts auf dem Server">
                 </div>
                 <button onclick="runAudit(event)" class="btn-action px-4 py-2 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-medium transition duration-200 flex items-center gap-2">
                     <i class="fa-solid fa-rotate text-xs"></i> System-Check
@@ -302,12 +302,16 @@
                         </div>
                     </div>
                 </div>
-                <div class="grid grid-cols-2 gap-2 pt-2">
-                    <button onclick="testDbConnection(event)" class="btn-action py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 transition flex items-center justify-center gap-1.5">
+                <div class="grid grid-cols-3 gap-2 pt-2">
+                    <button onclick="testDbConnection(event)" class="btn-action py-2.5 px-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 transition flex items-center justify-center gap-1">
                         <i class="fa-solid fa-plug text-purple-400"></i>
                         <span>DB Test</span>
                     </button>
-                    <button onclick="saveEnvSettings(event)" class="btn-action py-2.5 px-3 rounded-xl bg-purple-500/20 hover:bg-purple-500/30 text-purple-200 text-xs font-bold border border-purple-500/40 shadow-md transition flex items-center justify-center gap-1.5">
+                    <button onclick="createDatabaseAction(event)" class="btn-action py-2.5 px-2 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 text-xs font-semibold border border-amber-500/40 transition flex items-center justify-center gap-1">
+                        <i class="fa-solid fa-database text-amber-400"></i>
+                        <span>DB Erstellen</span>
+                    </button>
+                    <button onclick="saveEnvSettings(event)" class="btn-action py-2.5 px-2 rounded-xl bg-purple-500/20 hover:bg-purple-500/30 text-purple-200 text-xs font-bold border border-purple-500/40 shadow-md transition flex items-center justify-center gap-1">
                         <i class="fa-solid fa-floppy-disk text-purple-400"></i>
                         <span>Speichern</span>
                     </button>
@@ -330,8 +334,14 @@
                     <p class="text-xs text-slate-400">
                         Installiert alle PHP-Pakete neu für die ARM64 Architektur des Raspberry Pi 5 (<code class="text-indigo-300">composer install --no-dev</code>).
                     </p>
-                    <div class="p-3 bg-slate-950/60 rounded-lg border border-slate-800 text-xs text-slate-400">
-                        Autoloader-Optimierung aktiviert. Garantiert beste Performance auf 16GB RAM.
+                    <div class="p-3 bg-slate-950/60 rounded-lg border border-slate-800 text-xs text-slate-400 space-y-2">
+                        <div>Autoloader-Optimierung aktiviert. Garantiert beste Performance auf 16GB RAM.</div>
+                        <div class="flex items-center gap-2 pt-1 border-t border-slate-900">
+                            <input type="checkbox" id="composerDevMode" class="rounded bg-slate-900 border-slate-700 text-indigo-500 focus:ring-indigo-500">
+                            <label for="composerDevMode" class="cursor-pointer text-[11px] text-slate-300 font-medium">
+                                Dev-Pakete (inkl. Faker) mitinstallieren
+                            </label>
+                        </div>
                     </div>
                 </div>
                 <button onclick="runComposerInstall(event)" class="btn-action w-full py-2.5 px-4 rounded-xl bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 text-xs font-semibold border border-indigo-500/30 transition flex items-center justify-center gap-2">
@@ -422,11 +432,17 @@
             <div class="grid grid-cols-1 md:grid-cols-4 gap-4 text-xs">
                 <div>
                     <label class="block text-slate-400 font-medium mb-1">App-Name / Slug</label>
-                    <input type="text" id="nginxAppName" value="pi-deployer" oninput="generateNginxConfig()" class="w-full px-3 py-2 bg-slate-950 rounded-xl border border-slate-800 text-purple-300 font-mono focus:outline-none focus:border-purple-400">
+                    <input type="text" id="nginxAppName" value="{{ basename($targetPath) }}" oninput="generateNginxConfig()" class="w-full px-3 py-2 bg-slate-950 rounded-xl border border-slate-800 text-purple-300 font-mono focus:outline-none focus:border-purple-400">
                 </div>
                 <div>
-                    <label class="block text-slate-400 font-medium mb-1">Port</label>
-                    <input type="number" id="nginxPort" value="8445" oninput="generateNginxConfig()" class="w-full px-3 py-2 bg-slate-950 rounded-xl border border-slate-800 text-emerald-400 font-mono focus:outline-none focus:border-purple-400">
+                    <div class="flex justify-between items-center mb-1">
+                        <label class="block text-slate-400 font-medium">Port</label>
+                        <button onclick="checkFreePort(event)" class="text-[10px] text-emerald-400 hover:underline flex items-center gap-1">
+                            <i class="fa-solid fa-rotate-right text-[9px]"></i>
+                            <span>Port prüfen</span>
+                        </button>
+                    </div>
+                    <input type="number" id="nginxPort" value="{{ $nginxGenerated['port'] }}" oninput="generateNginxConfig()" class="w-full px-3 py-2 bg-slate-950 rounded-xl border border-slate-800 text-emerald-400 font-mono focus:outline-none focus:border-purple-400">
                 </div>
                 <div>
                     <label class="block text-slate-400 font-medium mb-1">Server Name (Domain/IP)</label>
@@ -442,8 +458,14 @@
                     </select>
                 </div>
                 <div class="md:col-span-3">
-                    <label class="block text-slate-400 font-medium mb-1">Projekt Root-Pfad</label>
-                    <input type="text" id="nginxRootPath" value="{{ $targetPath }}" oninput="generateNginxConfig()" class="w-full px-3 py-2 bg-slate-950 rounded-xl border border-slate-800 text-amber-300 font-mono focus:outline-none focus:border-purple-400">
+                    <div class="flex justify-between items-center mb-1">
+                        <label class="block text-slate-400 font-medium">Projekt Root-Pfad (DocumentRoot)</label>
+                        <button onclick="appendPublicToRootPath(event)" class="text-[10px] text-amber-400 hover:underline flex items-center gap-1">
+                            <i class="fa-solid fa-folder-tree text-[9px]"></i>
+                            <span>/public anhängen</span>
+                        </button>
+                    </div>
+                    <input type="text" id="nginxRootPath" value="{{ str_ends_with($targetPath, '/public') || str_ends_with($targetPath, '\\public') ? $targetPath : rtrim($targetPath, '/\\') . '/public' }}" oninput="generateNginxConfig()" class="w-full px-3 py-2 bg-slate-950 rounded-xl border border-slate-800 text-amber-300 font-mono focus:outline-none focus:border-purple-400">
                 </div>
                 <div class="flex items-center pt-5">
                     <label class="inline-flex items-center cursor-pointer space-x-2 text-xs text-slate-300 font-medium">
@@ -669,6 +691,25 @@
             }
         }
 
+        async function checkFreePort(event) {
+            if (event) event.preventDefault();
+            const currentPort = parseInt(document.getElementById('nginxPort').value) || 8445;
+            log(`Prüfe Port ${currentPort} auf dem Raspberry Pi...`, 'sys');
+            try {
+                const res = await (await fetch(`/pi-deploy/api/check-port?port=${currentPort}`)).json();
+                if (res.is_free) {
+                    log(`✓ Port ${currentPort} ist FREI und kann verwendet werden!`, 'info');
+                } else {
+                    log(`⚠️ Port ${currentPort} ist bereits BELEGT! Nächster freier Port: ${res.suggested_port}`, 'warn');
+                    document.getElementById('nginxPort').value = res.suggested_port;
+                    generateNginxConfig();
+                    log(`✓ Nginx-Konfiguration wurde automatisch auf freien Port ${res.suggested_port} umgestellt.`, 'info');
+                }
+            } catch (err) {
+                log('❌ Fehler beim Prüfen des Ports: ' + err, 'error');
+            }
+        }
+
         function copyNginxConfig() {
             const text = document.getElementById('nginxConfigDisplay').innerText;
             navigator.clipboard.writeText(text);
@@ -681,8 +722,60 @@
             log('✓ Nginx Setup-Befehle in die Zwischenablage kopiert!', 'info');
         }
 
+        function onTargetPathChange(event) {
+            const targetPath = getTargetPath();
+            if (!targetPath) return;
+
+            try {
+                localStorage.setItem('pi_deployer_target_path', targetPath);
+            } catch (e) {}
+
+            const cleanPath = targetPath.replace(/[/\\]+$/, '');
+            const slug = cleanPath.split(/[/\\]/).filter(Boolean).pop();
+
+            if (slug && document.getElementById('nginxAppName')) {
+                document.getElementById('nginxAppName').value = slug;
+            }
+
+            if (document.getElementById('nginxRootPath')) {
+                const rootPath = cleanPath.toLowerCase().endsWith('/public') ? cleanPath : cleanPath + '/public';
+                document.getElementById('nginxRootPath').value = rootPath;
+            }
+
+            const envPath = cleanPath.toLowerCase().endsWith('.env') ? cleanPath : cleanPath + '/.env';
+            if (document.getElementById('envPathText')) {
+                document.getElementById('envPathText').innerText = envPath;
+            }
+            if (document.getElementById('envPathBadge')) {
+                document.getElementById('envPathBadge').setAttribute('title', envPath);
+            }
+
+            generateNginxConfig();
+            runAudit(event);
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            const urlParams = new URLSearchParams(window.location.search);
+            const urlTargetPath = urlParams.get('target_path');
+
+            if (urlTargetPath) {
+                try { localStorage.setItem('pi_deployer_target_path', urlTargetPath); } catch (e) {}
+            } else {
+                const savedPath = localStorage.getItem('pi_deployer_target_path');
+                const inputEl = document.getElementById('targetProjectPath');
+                if (savedPath && inputEl) {
+                    inputEl.value = savedPath;
+                }
+            }
+            onTargetPathChange();
+        });
+
         async function runAudit(event) {
-            return handleBtnClick(event, async () => {
+            let targetBtn = null;
+            if (event && event.currentTarget && event.currentTarget.tagName === 'BUTTON') {
+                targetBtn = event.currentTarget;
+            }
+            return handleBtnClick(targetBtn, async () => {
                 log('System Audit gestartet...', 'sys');
                 const target = encodeURIComponent(getTargetPath());
                 const res = await (await fetch(`/pi-deploy/api/audit?target_path=${target}`)).json();
@@ -711,7 +804,33 @@
                     if (document.getElementById('gitCommitText')) document.getElementById('gitCommitText').innerText = res.gitStatus.last_commit || 'Nicht verfügbar';
                     if (document.getElementById('gitBadge')) document.getElementById('gitBadge').innerText = res.gitStatus.is_git_repo ? 'Git Repository' : 'Kein Git';
                 }
+
+                const newPath = res.target_path || audit.target_path || getTargetPath();
+                if (newPath) {
+                    const cleanPath = newPath.replace(/[/\\]+$/, '');
+                    const slug = cleanPath.split(/[/\\]/).filter(Boolean).pop();
+                    if (slug && document.getElementById('nginxAppName')) {
+                        document.getElementById('nginxAppName').value = slug;
+                    }
+                    if (document.getElementById('nginxRootPath')) {
+                        document.getElementById('nginxRootPath').value = cleanPath.endsWith('/public') ? cleanPath : cleanPath + '/public';
+                    }
+                    generateNginxConfig();
+                }
             });
+        }
+
+        function appendPublicToRootPath(event) {
+            if (event) event.preventDefault();
+            const el = document.getElementById('nginxRootPath');
+            if (el) {
+                let path = el.value.trim().replace(/[/\\]+$/, '');
+                if (!path.endsWith('/public')) {
+                    path += '/public';
+                }
+                el.value = path;
+                generateNginxConfig();
+            }
         }
 
         async function fixPermissions(event) {
@@ -824,6 +943,27 @@
             });
         }
 
+        async function createDatabaseAction(event) {
+            return handleBtnClick(event, async () => {
+                const dbName = document.getElementById('envDbName').value;
+                log(`Erstelle Datenbank '${dbName}'...`, 'sys');
+                const res = await post('/pi-deploy/api/create-db', {
+                    db_connection: document.getElementById('envDbConnection').value,
+                    db_host: document.getElementById('envDbHost').value,
+                    db_port: document.getElementById('envDbPort').value || '3306',
+                    db_database: dbName,
+                    db_username: document.getElementById('envDbUser').value,
+                    db_password: document.getElementById('envDbPass').value
+                });
+
+                if (res.success) {
+                    log('✓ ' + res.message, 'info');
+                } else {
+                    log('❌ ' + res.message, 'error');
+                }
+            });
+        }
+
         async function saveEnvSettings(event) {
             return handleBtnClick(event, async () => {
                 const targetPath = getTargetPath();
@@ -842,6 +982,24 @@
                         document.getElementById('envPathBadge').setAttribute('title', res.env_path);
                     }
                     log(`✓ .env Datei für Ziel-Projekt (${res.target_path || targetPath}) erfolgreich neu gespeichert unter:\n${res.env_path}`, 'info');
+
+                    const dbName = document.getElementById('envDbName').value;
+                    if (dbName) {
+                        log(`Prüfe/Erstelle Datenbank '${dbName}'...`, 'sys');
+                        const dbRes = await post('/pi-deploy/api/create-db', {
+                            db_connection: document.getElementById('envDbConnection').value,
+                            db_host: document.getElementById('envDbHost').value,
+                            db_port: document.getElementById('envDbPort').value || '3306',
+                            db_database: dbName,
+                            db_username: document.getElementById('envDbUser').value,
+                            db_password: document.getElementById('envDbPass').value
+                        });
+                        if (dbRes.success) {
+                            log('✓ ' + dbRes.message, 'info');
+                        } else {
+                            log('⚠️ ' + dbRes.message, 'warn');
+                        }
+                    }
                 } else {
                     log('❌ Fehler beim Speichern der .env im Ziel-Projektpfad', 'error');
                 }
@@ -850,8 +1008,9 @@
 
         async function runComposerInstall(event) {
             return handleBtnClick(event, async () => {
-                log('Starte composer install --no-dev --optimize-autoloader...', 'sys');
-                const res = await post('/pi-deploy/api/composer-install');
+                const devMode = document.getElementById('composerDevMode') ? document.getElementById('composerDevMode').checked : false;
+                log(`Starte composer install ${devMode ? '' : '--no-dev'} --optimize-autoloader...`, 'sys');
+                const res = await post('/pi-deploy/api/composer-install', { dev_mode: devMode });
                 if (res.success) {
                     log(`✓ Composer Pakete erfolgreich erzeugt:\n${res.output}`, 'info');
                 } else {
@@ -911,7 +1070,32 @@
                     const gitRes = await post('/pi-deploy/api/git-pull', { branch });
                     log(`✓ Git Pull (${branch}): ${gitRes.output || 'OK'}`, 'info');
 
-                    const compRes = await post('/pi-deploy/api/composer-install');
+                    log('Speichere .env & Stelle Datenbank sicher...', 'sys');
+                    await post('/pi-deploy/api/save-env', {
+                        DB_CONNECTION: document.getElementById('envDbConnection').value,
+                        DB_HOST: document.getElementById('envDbHost').value,
+                        DB_PORT: document.getElementById('envDbPort').value || '3306',
+                        DB_DATABASE: document.getElementById('envDbName').value,
+                        DB_USERNAME: document.getElementById('envDbUser').value,
+                        DB_PASSWORD: document.getElementById('envDbPass').value
+                    });
+
+                    const createDbRes = await post('/pi-deploy/api/create-db', {
+                        db_connection: document.getElementById('envDbConnection').value,
+                        db_host: document.getElementById('envDbHost').value,
+                        db_port: document.getElementById('envDbPort').value || '3306',
+                        db_database: document.getElementById('envDbName').value,
+                        db_username: document.getElementById('envDbUser').value,
+                        db_password: document.getElementById('envDbPass').value
+                    });
+                    if (createDbRes.success) {
+                        log(`✓ ${createDbRes.message}`, 'info');
+                    } else {
+                        log(`⚠️ DB-Hinweis: ${createDbRes.message}`, 'warn');
+                    }
+
+                    const devMode = document.getElementById('composerDevMode') ? document.getElementById('composerDevMode').checked : false;
+                    const compRes = await post('/pi-deploy/api/composer-install', { dev_mode: devMode });
                     log(`✓ Composer Packages: ${compRes.output || 'OK'}`, 'info');
 
                     const migRes = await post('/pi-deploy/api/run-migrations', { fresh: false });

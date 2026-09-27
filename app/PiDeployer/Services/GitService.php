@@ -2,25 +2,19 @@
 
 namespace App\PiDeployer\Services;
 
+use App\PiDeployer\Services\Concerns\ResolvesTargetPath;
 use Symfony\Component\Process\Process;
 
 class GitService
 {
-    /**
-     * Get current Git status and commit information.
-     *
-     * @return array<string, mixed>
-     */
-    /**
-     * Resolve target path.
-     */
-    protected function resolvePath(?string $targetPath = null): string
-    {
-        if (! empty($targetPath) && is_dir($targetPath)) {
-            return rtrim($targetPath, '/\\');
-        }
+    use ResolvesTargetPath;
 
-        return config('pi-deployer.target_path', base_path());
+    protected function ensureSafeDirectory(string $path): void
+    {
+        if (in_array(PHP_OS_FAMILY, ['Linux', 'BSD', 'Darwin'])) {
+            $proc = new Process(['git', 'config', '--global', '--add', 'safe.directory', $path]);
+            $proc->run();
+        }
     }
 
     /**
@@ -31,6 +25,7 @@ class GitService
     public function getStatus(?string $targetPath = null): array
     {
         $base = $this->resolvePath($targetPath);
+        $this->ensureSafeDirectory($base);
         $isGitRepo = is_dir($base.DIRECTORY_SEPARATOR.'.git');
 
         if (! $isGitRepo) {
@@ -69,7 +64,17 @@ class GitService
      */
     public function pull(?string $branch = null, bool $hardReset = false, ?string $targetPath = null): array
     {
-        $base = $this->resolvePath($targetPath);
+        $validated = $this->resolveAndValidatePath($targetPath);
+        if (! $validated['valid']) {
+            return [
+                'success' => false,
+                'branch' => $branch ?? config('pi-deployer.git.default_branch', 'main'),
+                'output' => $validated['error'],
+            ];
+        }
+
+        $base = $validated['path'];
+        $this->ensureSafeDirectory($base);
         $targetBranch = $branch ?? config('pi-deployer.git.default_branch', 'main');
         $output = [];
 

@@ -26,9 +26,10 @@ class PiDeployerController extends Controller
         $audit = $systemChecker->audit($targetPath);
         $gitStatus = $gitService->getStatus($targetPath);
         $envData = $envService->getEnvironmentData($targetPath);
+        $initialPort = $nginxService->isPortFree(8445) ? 8445 : $nginxService->findNextAvailablePort(8446);
         $nginxGenerated = $nginxService->generateConfig([
             'app_name' => basename($targetPath),
-            'port' => 8445,
+            'port' => $initialPort,
             'server_name' => 'rhz.internet-box.ch',
             'root_path' => $targetPath,
             'php_version' => substr(PHP_VERSION, 0, 3),
@@ -42,6 +43,21 @@ class PiDeployerController extends Controller
         $params = $request->only(['app_name', 'port', 'server_name', 'root_path', 'php_version', 'ssl_enabled', 'cert_path', 'key_path']);
 
         return response()->json($nginxService->generateConfig($params));
+    }
+
+    public function checkPort(Request $request, NginxService $nginxService): JsonResponse
+    {
+        $port = (int) $request->input('port', 8445);
+        $isFree = $nginxService->isPortFree($port);
+        $suggestedPort = $isFree ? $port : $nginxService->findNextAvailablePort($port);
+
+        return response()->json([
+            'success' => true,
+            'port' => $port,
+            'is_free' => $isFree,
+            'suggested_port' => $suggestedPort,
+            'used_nginx_ports' => $nginxService->getUsedPortsFromNginx(),
+        ]);
     }
 
     public function audit(
@@ -80,14 +96,23 @@ class PiDeployerController extends Controller
 
     public function testDb(Request $request, EnvironmentService $envService): JsonResponse
     {
-        $config = $request->only(['db_connection', 'db_host', 'db_port', 'db_database', 'db_username', 'db_password']);
+        $config = $request->only(['db_connection', 'db_host', 'db_port', 'db_database', 'db_username', 'db_password', 'target_path']);
 
         return response()->json($envService->testDatabaseConnection(array_filter($config, fn ($v) => $v !== null && $v !== '') ? $config : null));
     }
 
+    public function createDb(Request $request, EnvironmentService $envService): JsonResponse
+    {
+        $config = $request->only(['db_connection', 'db_host', 'db_port', 'db_database', 'db_username', 'db_password', 'target_path']);
+
+        return response()->json($envService->createDatabase(
+            array_filter($config, fn ($v) => $v !== null && $v !== '') ? $config : []
+        ));
+    }
+
     public function createDbUser(Request $request, EnvironmentService $envService): JsonResponse
     {
-        $config = $request->only(['db_connection', 'db_host', 'db_port', 'db_database', 'db_username', 'db_password']);
+        $config = $request->only(['db_connection', 'db_host', 'db_port', 'db_database', 'db_username', 'db_password', 'target_path']);
         $adminUser = $request->input('admin_username');
         $adminPassword = $request->input('admin_password');
 

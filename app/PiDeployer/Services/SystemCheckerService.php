@@ -2,19 +2,13 @@
 
 namespace App\PiDeployer\Services;
 
+use App\PiDeployer\Services\Concerns\ResolvesTargetPath;
 use Illuminate\Support\Facades\File;
 use Symfony\Component\Process\Process;
 
 class SystemCheckerService
 {
-    protected function resolvePath(?string $targetPath = null): string
-    {
-        if (! empty($targetPath) && File::isDirectory($targetPath)) {
-            return rtrim($targetPath, '/\\');
-        }
-
-        return config('pi-deployer.target_path', base_path());
-    }
+    use ResolvesTargetPath;
 
     /**
      * Audit system requirements, permissions, and environment info.
@@ -24,6 +18,7 @@ class SystemCheckerService
     public function audit(?string $targetPath = null): array
     {
         $base = $this->resolvePath($targetPath);
+        $exists = File::exists($base) && File::isDirectory($base);
         $requiredExtensions = ['pdo', 'mbstring', 'openssl', 'tokenizer', 'xml', 'ctype', 'json', 'bcmath', 'curl'];
         $extensionStatus = [];
 
@@ -37,16 +32,26 @@ class SystemCheckerService
         ]);
 
         $permissionStatus = [];
-        foreach ($writablePaths as $relativePath) {
-            $fullPath = $base.DIRECTORY_SEPARATOR.$relativePath;
-            if (! File::exists($fullPath)) {
-                File::makeDirectory($fullPath, 0775, true, true);
+        if ($exists) {
+            foreach ($writablePaths as $relativePath) {
+                $fullPath = $base.DIRECTORY_SEPARATOR.$relativePath;
+                if (! File::exists($fullPath)) {
+                    File::makeDirectory($fullPath, 0775, true, true);
+                }
+                $permissionStatus[$relativePath] = [
+                    'exists' => File::exists($fullPath),
+                    'is_writable' => is_writable($fullPath),
+                    'perms' => File::exists($fullPath) ? substr(sprintf('%o', fileperms($fullPath)), -4) : '0000',
+                ];
             }
-            $permissionStatus[$relativePath] = [
-                'exists' => File::exists($fullPath),
-                'is_writable' => is_writable($fullPath),
-                'perms' => File::exists($fullPath) ? substr(sprintf('%o', fileperms($fullPath)), -4) : '0000',
-            ];
+        } else {
+            foreach ($writablePaths as $relativePath) {
+                $permissionStatus[$relativePath] = [
+                    'exists' => false,
+                    'is_writable' => false,
+                    'perms' => '0000',
+                ];
+            }
         }
 
         return [
@@ -71,6 +76,15 @@ class SystemCheckerService
     public function fixPermissions(?string $targetPath = null): array
     {
         $base = $this->resolvePath($targetPath);
+        if (! File::exists($base) || ! File::isDirectory($base)) {
+            return [
+                'success' => false,
+                'target_path' => $base,
+                'error' => "Ziel-Verzeichnis existiert nicht: {$base}",
+                'details' => [],
+            ];
+        }
+
         $paths = config('pi-deployer.permissions.paths', ['storage', 'bootstrap/cache']);
         $results = [];
 

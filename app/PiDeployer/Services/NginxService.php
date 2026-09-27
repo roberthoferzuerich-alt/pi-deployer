@@ -2,7 +2,7 @@
 
 namespace App\PiDeployer\Services;
 
-use Illuminate\Support\Str;
+use Illuminate\Support\Facades\File;
 
 class NginxService
 {
@@ -14,25 +14,38 @@ class NginxService
      */
     public function generateConfig(array $params): array
     {
-        $rawAppName = ! empty($params['app_name']) ? $params['app_name'] : 'pi-deployer';
-        $appName = Str::slug($rawAppName, '_');
-        if (empty($appName)) {
-            $appName = 'pi-deployer';
+        $rootPath = rtrim(trim($params['root_path'] ?? '/var/www/pi-deployer'), '/\\');
+        if (! str_ends_with($rootPath, '/public')) {
+            $rootPath .= '/public';
         }
 
-        $port = (int) ($params['port'] ?? 8445);
-        if ($port <= 0 || $port > 65535) {
-            $port = 8445;
+        $rawAppName = ! empty($params['app_name']) ? trim($params['app_name']) : '';
+        if (empty($rawAppName) || $rawAppName === 'pi-deployer') {
+            $baseDir = preg_replace('/[\/\\\\]public$/i', '', $rootPath);
+            $extractedSlug = basename($baseDir);
+            if (! empty($extractedSlug) && ! in_array($extractedSlug, ['www', 'var', 'public', 'html'])) {
+                $rawAppName = $extractedSlug;
+            }
+        }
+        if (empty($rawAppName)) {
+            $rawAppName = 'pi-deployer';
+        }
+
+        $appName = preg_replace('/[^a-zA-Z0-9_\-]/', '_', $rawAppName);
+
+        $requestedPort = (int) ($params['port'] ?? 8445);
+        if ($requestedPort <= 0 || $requestedPort > 65535) {
+            $requestedPort = 8445;
+        }
+
+        $port = $requestedPort;
+        if (! empty($params['auto_resolve_port']) && ! $this->isPortFree($requestedPort)) {
+            $port = $this->findNextAvailablePort($requestedPort + 1);
         }
 
         $serverName = trim($params['server_name'] ?? 'rhz.internet-box.ch');
         if (empty($serverName)) {
             $serverName = '_';
-        }
-
-        $rootPath = rtrim(trim($params['root_path'] ?? '/var/www/pi-deployer'), '/\\');
-        if (! str_ends_with($rootPath, '/public')) {
-            $rootPath .= '/public';
         }
 
         $phpVersion = trim($params['php_version'] ?? '8.4');
@@ -116,5 +129,70 @@ NGINX;
             'config' => $configContent,
             'setup_commands' => $setupCommands,
         ];
+    }
+
+    /**
+     * Check if a specific network port is currently free (not in use).
+     */
+    public function isPortFree(int $port, string $host = '127.0.0.1'): bool
+    {
+        if ($port <= 0 || $port > 65535) {
+            return false;
+        }
+
+        $connection = @fsockopen($host, $port, $errno, $errstr, 0.4);
+        if (is_resource($connection)) {
+            fclose($connection);
+
+            return false;
+        }
+
+        $nginxUsedPorts = $this->getUsedPortsFromNginx();
+        if (in_array($port, $nginxUsedPorts, true)) {
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * Find the next available free port starting from a given port.
+     */
+    public function findNextAvailablePort(int $startPort = 8445, int $maxPort = 8550): int
+    {
+        for ($p = $startPort; $p <= $maxPort; $p++) {
+            if ($this->isPortFree($p)) {
+                return $p;
+            }
+        }
+
+        return $startPort;
+    }
+
+    /**
+     * Parse Nginx config files to find all configured listen ports.
+     *
+     * @return array<int, int>
+     */
+    public function getUsedPortsFromNginx(): array
+    {
+        $usedPorts = [80, 443];
+        $paths = ['/etc/nginx/sites-enabled', '/etc/nginx/sites-available'];
+
+        foreach ($paths as $path) {
+            if (File::isDirectory($path)) {
+                $files = File::files($path);
+                foreach ($files as $file) {
+                    $content = File::get($file->getRealPath());
+                    if (preg_match_all('/listen\s+\[?::\]?:?(\d+)/i', $content, $matches)) {
+                        foreach ($matches[1] as $p) {
+                            $usedPorts[] = (int) $p;
+                        }
+                    }
+                }
+            }
+        }
+
+        return array_values(array_unique($usedPorts));
     }
 }

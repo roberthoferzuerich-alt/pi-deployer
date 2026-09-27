@@ -51,6 +51,25 @@ class PiDeployCommand extends Command
     ): int {
         intro('🚀 Raspberry Pi 5 Laravel Deployment & Migration Wizard');
 
+        $targetPath = config('pi-deployer.target_path');
+        if (empty($targetPath) || ! file_exists($targetPath) || ! is_dir($targetPath)) {
+            $this->error('❌ Ziel-Verzeichnis existiert nicht oder ist nicht konfiguriert: '.($targetPath ?: '[nicht gesetzt]'));
+            $this->warn('Bitte erstelle den Ziel-Ordner neu oder setze PI_TARGET_PROJECT_PATH in .env auf ein gültiges Projekt (z.B. /var/www/mein-projekt).');
+
+            return self::FAILURE;
+        }
+
+        $realTarget = realpath($targetPath);
+        $realDeployer = realpath(base_path());
+        if ($realTarget !== false && $realDeployer !== false && rtrim($realTarget, '/\\') === rtrim($realDeployer, '/\\')) {
+            if (! config('pi-deployer.allow_self_deploy', false)) {
+                $this->error("❌ Sicherheitssperre: Pi-Deployer darf nicht auf sich selbst ({$targetPath}) ausgeführt werden.");
+                $this->warn('Bitte setze PI_TARGET_PROJECT_PATH in .env auf den Pfad deines Ziel-Projekts.');
+
+                return self::FAILURE;
+            }
+        }
+
         // Step 1: System & Permissions Check
         note('Step 1: Checking System & Directory Permissions...');
         $audit = $systemChecker->audit();
@@ -92,19 +111,34 @@ class PiDeployCommand extends Command
         $dbTest = $envService->testDatabaseConnection();
 
         if (! $dbTest['success']) {
-            $this->error('Database connection failed: '.$dbTest['message']);
-            if ($this->laravel->runningInConsole() && confirm('Would you like to configure DB settings now?')) {
-                $host = text('DB Host', default: $envData['db_host']);
-                $db = text('DB Database', default: $envData['db_database']);
-                $user = text('DB Username', default: $envData['db_username']);
-                $pass = text('DB Password', default: '');
+            $this->warn('Database connection failed or database missing. Attempting auto-creation...');
+            $createDbRes = $envService->createDatabase([
+                'target_path' => $envData['target_path'],
+                'db_connection' => $envData['db_connection'],
+                'db_host' => $envData['db_host'],
+                'db_port' => $envData['db_port'],
+                'db_database' => $envData['db_database'],
+                'db_username' => $envData['db_username'],
+                'db_password' => $envData['db_password'],
+            ]);
 
-                $envService->updateEnvironment([
-                    'DB_HOST' => $host,
-                    'DB_DATABASE' => $db,
-                    'DB_USERNAME' => $user,
-                    'DB_PASSWORD' => $pass,
-                ]);
+            if ($createDbRes['success']) {
+                $this->info("✓ {$createDbRes['message']}");
+            } else {
+                $this->error('Database connection failed: '.$dbTest['message']);
+                if ($this->laravel->runningInConsole() && confirm('Would you like to configure DB settings now?')) {
+                    $host = text('DB Host', default: $envData['db_host']);
+                    $db = text('DB Database', default: $envData['db_database']);
+                    $user = text('DB Username', default: $envData['db_username']);
+                    $pass = text('DB Password', default: '');
+
+                    $envService->updateEnvironment([
+                        'DB_HOST' => $host,
+                        'DB_DATABASE' => $db,
+                        'DB_USERNAME' => $user,
+                        'DB_PASSWORD' => $pass,
+                    ]);
+                }
             }
         } else {
             $this->info('✓ Database connection verified.');

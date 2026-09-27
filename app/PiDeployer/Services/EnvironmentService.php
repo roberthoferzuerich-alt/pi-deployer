@@ -2,22 +2,21 @@
 
 namespace App\PiDeployer\Services;
 
+use App\PiDeployer\Services\Concerns\ResolvesTargetPath;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 
 class EnvironmentService
 {
+    use ResolvesTargetPath;
+
     /**
      * Resolve target directory path.
      */
     public function resolveTargetPath(?string $targetPath = null): string
     {
-        if (! empty($targetPath) && File::isDirectory($targetPath)) {
-            return rtrim($targetPath, '/\\');
-        }
-
-        return config('pi-deployer.target_path', base_path());
+        return $this->resolvePath($targetPath);
     }
 
     /**
@@ -28,12 +27,13 @@ class EnvironmentService
     public function getEnvironmentData(?string $targetPath = null): array
     {
         $base = $this->resolveTargetPath($targetPath);
+        $baseExists = File::exists($base) && File::isDirectory($base);
         $envPath = $base.DIRECTORY_SEPARATOR.'.env';
         $examplePath = $base.DIRECTORY_SEPARATOR.'.env.example';
 
-        $exists = File::exists($envPath);
+        $exists = $baseExists && File::exists($envPath);
 
-        if (! $exists && File::exists($examplePath)) {
+        if (! $exists && $baseExists && File::exists($examplePath)) {
             File::copy($examplePath, $envPath);
             $exists = true;
         }
@@ -91,6 +91,15 @@ class EnvironmentService
             }
         }
 
+        if (! preg_match('/^APP_KEY=base64:.+/m', $content)) {
+            $key = 'base64:'.base64_encode(random_bytes(32));
+            if (preg_match('/^APP_KEY=.*/m', $content)) {
+                $content = preg_replace('/^APP_KEY=.*/m', "APP_KEY={$key}", $content);
+            } else {
+                $content .= "\nAPP_KEY={$key}";
+            }
+        }
+
         File::put($envPath, trim($content)."\n");
 
         Artisan::call('config:clear');
@@ -106,11 +115,14 @@ class EnvironmentService
      */
     public function testDatabaseConnection(?array $configOverride = null): array
     {
-        $driver = $configOverride['db_connection'] ?? config('database.default', 'mysql');
+        $targetPath = $configOverride['target_path'] ?? null;
+        $envData = $this->getEnvironmentData($targetPath);
+
+        $driver = $configOverride['db_connection'] ?? $envData['db_connection'] ?? config('database.default', 'mysql');
 
         if ($driver === 'sqlite') {
             try {
-                $database = $configOverride['db_database'] ?? config('database.connections.sqlite.database', database_path('database.sqlite'));
+                $database = $configOverride['db_database'] ?? $envData['db_database'] ?? config('database.connections.sqlite.database', database_path('database.sqlite'));
                 if ($database !== ':memory:' && ! File::exists($database)) {
                     File::put($database, '');
                 }
@@ -127,11 +139,11 @@ class EnvironmentService
             }
         }
 
-        $host = $configOverride['db_host'] ?? config("database.connections.{$driver}.host", '127.0.0.1');
-        $port = $configOverride['db_port'] ?? config("database.connections.{$driver}.port", '3306');
-        $database = $configOverride['db_database'] ?? config("database.connections.{$driver}.database", '');
-        $username = $configOverride['db_username'] ?? config("database.connections.{$driver}.username", '');
-        $password = $configOverride['db_password'] ?? config("database.connections.{$driver}.password", '');
+        $host = $configOverride['db_host'] ?? $envData['db_host'] ?? '127.0.0.1';
+        $port = $configOverride['db_port'] ?? $envData['db_port'] ?? '3306';
+        $database = $configOverride['db_database'] ?? $envData['db_database'] ?? '';
+        $username = $configOverride['db_username'] ?? $envData['db_username'] ?? '';
+        $password = $configOverride['db_password'] ?? $envData['db_password'] ?? '';
 
         try {
             config([
@@ -156,22 +168,29 @@ class EnvironmentService
             ];
         } catch (\Throwable $e) {
             $msg = $e->getMessage();
+            $code = $e->getCode();
 
-            // Auto-create DB if error 1049 (Unknown database)
-            if (str_contains($msg, '1049') && ! empty($database)) {
-                try {
-                    $pdo = new \PDO("mysql:host={$host};port={$port}", $username, $password);
-                    $pdo->exec("CREATE DATABASE IF NOT EXISTS `{$database}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;");
+            $isUnknownDb = str_contains($msg, '1049')
+                || str_contains(strtolower($msg), 'unknown database')
+                || str_contains(strtolower($msg), 'does not exist')
+                || $code == 1049;
 
-                    DB::purge('pi_test');
-                    DB::connection('pi_test')->getPdo();
+            if ($isUnknownDb && ! empty($database)) {
+                $createRes = $this->createDatabase($configOverride ?? []);
+                if ($createRes['success']) {
+                    try {
+                        DB::purge('pi_test');
+                        DB::connection('pi_test')->getPdo();
 
-                    return [
-                        'success' => true,
-                        'message' => "Datenbank `{$database}` wurde automatisch erstellt und Verbindung erfolgreich hergestellt!",
-                    ];
-                } catch (\Throwable $createErr) {
-                    $msg = $createErr->getMessage();
+                        return [
+                            'success' => true,
+                            'message' => "Datenbank `{$database}` wurde automatisch erstellt und Verbindung erfolgreich hergestellt!",
+                        ];
+                    } catch (\Throwable $createErr) {
+                        $msg = 'Datenbank wurde angelegt, aber Verbindung schlug fehl: '.$createErr->getMessage();
+                    }
+                } else {
+                    $msg .= ' [Auto-Create fehlgeschlagen: '.$createRes['message'].']';
                 }
             }
 
@@ -184,6 +203,135 @@ class EnvironmentService
                 'message' => 'DB-Verbindung fehlgeschlagen: '.$msg,
             ];
         }
+    }
+
+    /**
+     * Explicitly create database if it does not exist.
+     *
+     * @param  array<string, string>  $config
+     * @return array<string, mixed>
+     */
+    public function createDatabase(array $config = [], ?string $adminUser = null, ?string $adminPassword = null): array
+    {
+        $targetPath = $config['target_path'] ?? null;
+        $envData = $this->getEnvironmentData($targetPath);
+
+        $driver = $config['db_connection'] ?? $envData['db_connection'] ?? config('database.default', 'mysql');
+        $database = $config['db_database'] ?? $envData['db_database'] ?? '';
+
+        if (empty($database)) {
+            return [
+                'success' => false,
+                'message' => 'Es wurde kein Datenbank-Name angegeben.',
+            ];
+        }
+
+        if ($driver === 'sqlite') {
+            try {
+                $dir = dirname($database);
+                if (! File::isDirectory($dir) && $dir !== '.' && $database !== ':memory:') {
+                    File::makeDirectory($dir, 0755, true, true);
+                }
+                if ($database !== ':memory:' && ! File::exists($database)) {
+                    File::put($database, '');
+                }
+
+                return [
+                    'success' => true,
+                    'message' => "SQLite-Datenbankdatei `{$database}` wurde erfolgreich erstellt!",
+                ];
+            } catch (\Throwable $e) {
+                return [
+                    'success' => false,
+                    'message' => 'Fehler beim Erstellen der SQLite-Datei: '.$e->getMessage(),
+                ];
+            }
+        }
+
+        if (! in_array($driver, ['mysql', 'mariadb', 'pgsql'])) {
+            return [
+                'success' => false,
+                'message' => "Datenbank-Erstellung wird für Treiber '{$driver}' aktuell nicht unterstützt.",
+            ];
+        }
+
+        $host = $config['db_host'] ?? $envData['db_host'] ?? '127.0.0.1';
+        $port = $config['db_port'] ?? $envData['db_port'] ?? '3306';
+        $username = $config['db_username'] ?? $envData['db_username'] ?? '';
+        $password = $config['db_password'] ?? $envData['db_password'] ?? '';
+
+        if ($driver === 'pgsql') {
+            try {
+                $dsn = "pgsql:host={$host};port={$port};dbname=postgres";
+                $pdo = new \PDO($dsn, $username, $password, [\PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION]);
+                $dbEscaped = str_replace('"', '""', $database);
+                $pdo->exec("CREATE DATABASE \"{$dbEscaped}\";");
+
+                return [
+                    'success' => true,
+                    'message' => "PostgreSQL-Datenbank `{$database}` wurde erfolgreich angelegt!",
+                ];
+            } catch (\Throwable $e) {
+                return [
+                    'success' => false,
+                    'message' => 'Fehler beim Erstellen der PostgreSQL-Datenbank: '.$e->getMessage(),
+                ];
+            }
+        }
+
+        // MySQL / MariaDB
+        $credentialsToTry = $this->getAdminCredentials($adminUser, $adminPassword, $username, $password);
+
+        $lastError = '';
+        foreach ($credentialsToTry as $cred) {
+            try {
+                $dsn = "mysql:host={$host};port={$port}";
+                $pdo = new \PDO($dsn, $cred['user'], $cred['pass'], [
+                    \PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION,
+                ]);
+                $dbEscaped = str_replace('`', '``', $database);
+                $pdo->exec("CREATE DATABASE IF NOT EXISTS `{$dbEscaped}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;");
+
+                if (! empty($username) && $cred['user'] !== $username) {
+                    $userEscaped = addslashes($username);
+                    $passEscaped = addslashes($password);
+                    foreach (['%', 'localhost', '127.0.0.1'] as $hostScope) {
+                        try {
+                            $pdo->exec("CREATE USER IF NOT EXISTS '{$userEscaped}'@'{$hostScope}' IDENTIFIED BY '{$passEscaped}';");
+                        } catch (\Throwable $eUser) {
+                            // ignore if already exists or not supported
+                        }
+                        try {
+                            $pdo->exec("ALTER USER '{$userEscaped}'@'{$hostScope}' IDENTIFIED BY '{$passEscaped}';");
+                        } catch (\Throwable $eAlter) {
+                            // ignore if alter not supported
+                        }
+                        try {
+                            $pdo->exec("GRANT ALL PRIVILEGES ON `{$dbEscaped}`.* TO '{$userEscaped}'@'{$hostScope}';");
+                        } catch (\Throwable $eGrant) {
+                            // ignore if grant fails
+                        }
+                    }
+                    try {
+                        $pdo->exec('FLUSH PRIVILEGES;');
+                    } catch (\Throwable $eFlush) {
+                        // ignore
+                    }
+                }
+
+                return [
+                    'success' => true,
+                    'message' => "Datenbank `{$database}` wurde erfolgreich angelegt und Rechte für '{$username}' vergeben!",
+                ];
+            } catch (\Throwable $e) {
+                $lastError = $e->getMessage();
+            }
+        }
+
+        return [
+            'success' => false,
+            'message' => "Fehler beim Erstellen der Datenbank `{$database}`: ".$lastError,
+        ];
     }
 
     /**
@@ -215,12 +363,7 @@ class EnvironmentService
             ];
         }
 
-        $adminCredentials = [];
-        if (! empty($adminUser)) {
-            $adminCredentials[] = ['user' => $adminUser, 'pass' => $adminPassword ?? ''];
-        }
-        $adminCredentials[] = ['user' => 'root', 'pass' => ''];
-        $adminCredentials[] = ['user' => 'root', 'pass' => 'root'];
+        $adminCredentials = $this->getAdminCredentials($adminUser, $adminPassword);
 
         $adminPdo = null;
         $lastError = '';
@@ -248,7 +391,7 @@ class EnvironmentService
             $userEscaped = addslashes($username);
             $passEscaped = addslashes($password);
 
-            foreach (['%', 'localhost'] as $hostScope) {
+            foreach (['%', 'localhost', '127.0.0.1'] as $hostScope) {
                 try {
                     $adminPdo->exec("CREATE USER IF NOT EXISTS '{$userEscaped}'@'{$hostScope}' IDENTIFIED BY '{$passEscaped}';");
                 } catch (\Throwable $e) {
@@ -344,5 +487,43 @@ class EnvironmentService
         }
 
         return $value;
+    }
+
+    /**
+     * Get prioritized list of admin credentials to attempt for DB creation & user management.
+     *
+     * @return array<int, array{user: string, pass: string}>
+     */
+    protected function getAdminCredentials(?string $adminUser = null, ?string $adminPassword = null, ?string $dbUser = null, ?string $dbPass = null): array
+    {
+        $creds = [];
+
+        if (! empty($adminUser)) {
+            $creds[] = ['user' => $adminUser, 'pass' => $adminPassword ?? ''];
+        }
+
+        $configUser = config('pi-deployer.database.admin_username', 'root');
+        $configPass = config('pi-deployer.database.admin_password', 'A67d201#');
+        if (! empty($configUser)) {
+            $creds[] = ['user' => $configUser, 'pass' => $configPass];
+        }
+
+        if (! empty($dbUser)) {
+            $creds[] = ['user' => $dbUser, 'pass' => $dbPass ?? ''];
+        }
+
+        $creds[] = ['user' => 'root', 'pass' => 'A67d201#'];
+        $creds[] = ['user' => 'root', 'pass' => ''];
+        $creds[] = ['user' => 'root', 'pass' => 'root'];
+
+        $unique = [];
+        foreach ($creds as $c) {
+            $key = $c['user'].':'.$c['pass'];
+            if (! isset($unique[$key])) {
+                $unique[$key] = $c;
+            }
+        }
+
+        return array_values($unique);
     }
 }

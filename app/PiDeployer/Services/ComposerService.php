@@ -2,18 +2,12 @@
 
 namespace App\PiDeployer\Services;
 
+use App\PiDeployer\Services\Concerns\ResolvesTargetPath;
 use Symfony\Component\Process\Process;
 
 class ComposerService
 {
-    protected function resolvePath(?string $targetPath = null): string
-    {
-        if (! empty($targetPath) && is_dir($targetPath)) {
-            return rtrim($targetPath, '/\\');
-        }
-
-        return config('pi-deployer.target_path', base_path());
-    }
+    use ResolvesTargetPath;
 
     /**
      * Run composer install / package generation.
@@ -22,7 +16,16 @@ class ComposerService
      */
     public function install(bool $devMode = false, ?string $targetPath = null): array
     {
-        $base = $this->resolvePath($targetPath);
+        $validated = $this->resolveAndValidatePath($targetPath);
+        if (! $validated['valid']) {
+            return [
+                'success' => false,
+                'target_path' => $validated['path'],
+                'output' => $validated['error'],
+            ];
+        }
+
+        $base = $validated['path'];
         $binary = config('pi-deployer.composer.binary', 'composer');
         $args = [$binary, 'install', '--no-interaction'];
 
@@ -36,6 +39,13 @@ class ComposerService
 
         $success = $process->isSuccessful();
         $output = $process->getOutput() ?: $process->getErrorOutput();
+
+        if (file_exists($base.DIRECTORY_SEPARATOR.'package.json') && config('pi-deployer.npm.run_build', true)) {
+            $npmResult = $this->buildNpmAssets($targetPath);
+            if (! empty($npmResult['build_output'])) {
+                $output .= "\n[NPM Build Output]:\n".$npmResult['build_output'];
+            }
+        }
 
         return [
             'success' => $success,

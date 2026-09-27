@@ -80,6 +80,21 @@ class PiDeployerTest extends TestCase
     }
 
     /**
+     * Test create DB API endpoint.
+     */
+    public function test_create_db_api_endpoint(): void
+    {
+        $response = $this->withoutMiddleware()
+            ->postJson('/pi-deploy/api/create-db', [
+                'db_connection' => 'sqlite',
+                'db_database' => ':memory:',
+            ]);
+
+        $response->assertStatus(200);
+        $response->assertJson(['success' => true]);
+    }
+
+    /**
      * Test create DB user API endpoint for unsupported driver or missing parameters.
      */
     public function test_create_db_user_api_endpoint_returns_json(): void
@@ -116,5 +131,64 @@ class PiDeployerTest extends TestCase
             'filename' => 'chatconnect_8443',
             'sites_available_path' => '/etc/nginx/sites-available/chatconnect_8443',
         ]);
+    }
+
+    /**
+     * Test check port API endpoint.
+     */
+    public function test_check_port_api_endpoint(): void
+    {
+        $response = $this->withoutMiddleware()
+            ->getJson('/pi-deploy/api/check-port?port=8445');
+
+        $response->assertStatus(200);
+        $response->assertJsonStructure([
+            'success',
+            'port',
+            'is_free',
+            'suggested_port',
+            'used_nginx_ports',
+        ]);
+    }
+
+    /**
+     * Test composer install returns safety error when targeting self or non-existent path.
+     */
+    public function test_composer_install_prevents_self_deployment(): void
+    {
+        $response = $this->withoutMiddleware()
+            ->postJson('/pi-deploy/api/composer-install', [
+                'target_path' => base_path(),
+            ]);
+
+        $response->assertStatus(200);
+        $response->assertJson(['success' => false]);
+        $this->assertStringContainsString('Sicherheitssperre', $response->json('output'));
+    }
+
+    /**
+     * Test composer install returns error when targeting non-existent directory.
+     */
+    public function test_composer_install_fails_on_non_existent_path(): void
+    {
+        $response = $this->withoutMiddleware()
+            ->postJson('/pi-deploy/api/composer-install', [
+                'target_path' => '/var/www/non-existent-project-12345',
+            ]);
+
+        $response->assertStatus(200);
+        $response->assertJson(['success' => false]);
+        $this->assertStringContainsString('existiert nicht', $response->json('output'));
+    }
+
+    /**
+     * Test pi:deploy command fails when target path is invalid.
+     */
+    public function test_pi_deploy_command_fails_on_invalid_target_path(): void
+    {
+        config(['pi-deployer.target_path' => '/var/www/non-existent-project-12345']);
+
+        $this->artisan('pi:deploy')
+            ->assertExitCode(1);
     }
 }
