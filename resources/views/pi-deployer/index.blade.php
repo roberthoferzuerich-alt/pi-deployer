@@ -138,6 +138,32 @@
                 <button onclick="runAudit(event)" class="btn-action px-4 py-2 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-medium transition duration-200 flex items-center gap-2">
                     <i class="fa-solid fa-rotate text-xs"></i> System-Check
                 </button>
+
+                <!-- Zahnrad-Menü (Settings & Info) -->
+                <div class="relative">
+                    <button onclick="toggleSettingsMenu(event)" id="settingsBtn" class="btn-action w-9 h-9 rounded-lg bg-purple-500/10 hover:bg-purple-500/20 text-purple-300 border border-purple-500/30 font-medium transition duration-200 flex items-center justify-center" title="Einstellungen & Info">
+                        <i class="fa-solid fa-gear text-sm"></i>
+                    </button>
+                    <div id="settingsDropdownMenu" class="hidden absolute right-0 mt-2 w-64 glass-card rounded-2xl border border-purple-500/30 shadow-2xl z-50 p-2 transform scale-95 opacity-0 transition-all duration-200">
+                        <div class="px-3 py-2 text-[10px] font-bold text-slate-400 uppercase tracking-wider border-b border-slate-800/80 mb-1">
+                            Navigation & Information
+                        </div>
+                        <button onclick="openUserDescModal()" class="w-full text-left px-3 py-2.5 rounded-xl hover:bg-purple-500/20 text-slate-200 hover:text-white transition flex items-center gap-2.5 text-xs font-medium">
+                            <i class="fa-solid fa-book-open text-purple-400 text-sm"></i>
+                            <div class="flex flex-col">
+                                <span class="font-semibold">Benutzerbeschreibung</span>
+                                <span class="text-[10px] text-slate-400 font-mono">user_desc_screen.dart</span>
+                            </div>
+                        </button>
+                        <button onclick="openAboutMeModal()" class="w-full text-left px-3 py-2.5 rounded-xl hover:bg-emerald-500/20 text-slate-200 hover:text-white transition flex items-center gap-2.5 text-xs font-medium">
+                            <i class="fa-solid fa-user-astronaut text-emerald-400 text-sm"></i>
+                            <div class="flex flex-col">
+                                <span class="font-semibold">Über Mich</span>
+                                <span class="text-[10px] text-slate-400 font-mono">about_me.dart</span>
+                            </div>
+                        </button>
+                    </div>
+                </div>
             </div>
         </div>
     </header>
@@ -630,9 +656,13 @@
             if (type === 'warn') colorClass = 'text-amber-300';
             if (type === 'sys') colorClass = 'text-cyan-400';
 
+            const cleanMessage = String(message)
+                .replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '')
+                .replace(/\[\d+(?:;\d+)*m/g, '');
+
             const line = document.createElement('div');
             line.className = `${colorClass} py-0.5 border-b border-slate-900/50`;
-            line.innerHTML = `<span class="text-slate-600">[${time}]</span> ${message}`;
+            line.innerHTML = `<span class="text-slate-600">[${time}]</span> ${cleanMessage}`;
             terminal.appendChild(line);
             terminal.scrollTop = terminal.scrollHeight;
         }
@@ -1063,15 +1093,25 @@
                 log('==================================================', 'sys');
 
                 try {
-                    await post('/pi-deploy/api/fix-permissions');
+                    const permRes = await post('/pi-deploy/api/fix-permissions');
+                    if (permRes && permRes.success === false) {
+                        log(`❌ Berechtigungen-Fehler: ${permRes.error || 'Zielpfad ungültig'}`, 'error');
+                        log('🛑 DEPLOYMENT ABGEBROCHEN.', 'error');
+                        throw new Error(permRes.error || 'Permission error');
+                    }
                     log('✓ Verzeichnis-Berechtigungen (0775 / www-data) angepasst.', 'info');
                     
                     const branch = document.getElementById('gitBranchInput').value || 'main';
                     const gitRes = await post('/pi-deploy/api/git-pull', { branch });
+                    if (!gitRes.success) {
+                        log(`❌ Git Pull (${branch}) fehlgeschlagen:\n${gitRes.output}`, 'error');
+                        log('🛑 DEPLOYMENT ABGEBROCHEN wegen Git-Fehler.', 'error');
+                        throw new Error(gitRes.output || 'Git pull error');
+                    }
                     log(`✓ Git Pull (${branch}): ${gitRes.output || 'OK'}`, 'info');
 
                     log('Speichere .env & Stelle Datenbank sicher...', 'sys');
-                    await post('/pi-deploy/api/save-env', {
+                    const saveEnvRes = await post('/pi-deploy/api/save-env', {
                         DB_CONNECTION: document.getElementById('envDbConnection').value,
                         DB_HOST: document.getElementById('envDbHost').value,
                         DB_PORT: document.getElementById('envDbPort').value || '3306',
@@ -1079,6 +1119,12 @@
                         DB_USERNAME: document.getElementById('envDbUser').value,
                         DB_PASSWORD: document.getElementById('envDbPass').value
                     });
+
+                    if (saveEnvRes && saveEnvRes.success === false) {
+                        log('❌ Speichern der .env fehlgeschlagen', 'error');
+                        log('🛑 DEPLOYMENT ABGEBROCHEN.', 'error');
+                        throw new Error('.env save error');
+                    }
 
                     const createDbRes = await post('/pi-deploy/api/create-db', {
                         db_connection: document.getElementById('envDbConnection').value,
@@ -1096,26 +1142,114 @@
 
                     const devMode = document.getElementById('composerDevMode') ? document.getElementById('composerDevMode').checked : false;
                     const compRes = await post('/pi-deploy/api/composer-install', { dev_mode: devMode });
+                    if (!compRes.success) {
+                        log(`❌ Composer Packages fehlgeschlagen:\n${compRes.output}`, 'error');
+                        log('🛑 DEPLOYMENT ABGEBROCHEN wegen Composer-Fehler.', 'error');
+                        throw new Error(compRes.output || 'Composer error');
+                    }
                     log(`✓ Composer Packages: ${compRes.output || 'OK'}`, 'info');
 
                     const migRes = await post('/pi-deploy/api/run-migrations', { fresh: false });
+                    if (!migRes.success) {
+                        log(`❌ Migrations fehlgeschlagen:\n${migRes.output || migRes.error}`, 'error');
+                        log('🛑 DEPLOYMENT ABGEBROCHEN wegen Migrations-Fehler.', 'error');
+                        throw new Error(migRes.error || migRes.output || 'Migration error');
+                    }
                     log(`✓ Migrations: ${migRes.output || 'OK'}`, 'info');
 
                     const seederClass = document.getElementById('seederClassInput').value || null;
                     const seedRes = await post('/pi-deploy/api/run-seeders', { seeder_class: seederClass });
-                    log(`✓ Seeders: ${seedRes.output || 'OK'}`, 'info');
+                    if (!seedRes.success) {
+                        log(`⚠️ Seeders Hinweis:\n${seedRes.output || seedRes.error}`, 'warn');
+                    } else {
+                        log(`✓ Seeders: ${seedRes.output || 'OK'}`, 'info');
+                    }
 
                     const optRes = await post('/pi-deploy/api/optimize');
-                    log(`✓ Optimization Caches: ${optRes.output || 'OK'}`, 'info');
+                    if (!optRes.success) {
+                        log(`⚠️ Optimization Hinweis:\n${optRes.output || optRes.error}`, 'warn');
+                    } else {
+                        log(`✓ Optimization Caches: ${optRes.output || 'OK'}`, 'info');
+                    }
 
                     log('==================================================', 'info');
                     log('🎉 DEPLOYMENT & MIGRATION ERFOLGREICH ABGESCHLOSSEN!', 'info');
                     log('==================================================', 'info');
                 } catch (err) {
-                    log('❌ Fehler während des automatischen Deployments: ' + err, 'error');
+                    log('==================================================', 'error');
+                    log('❌ DEPLOYMENT FEHLGESCHLAGEN: ' + (err.message || err), 'error');
+                    log('==================================================', 'error');
                     throw err;
                 }
             });
+        }
+        function toggleSettingsMenu(event) {
+            if (event) event.stopPropagation();
+            const menu = document.getElementById('settingsDropdownMenu');
+            if (menu.classList.contains('hidden')) {
+                menu.classList.remove('hidden');
+                setTimeout(() => {
+                    menu.classList.remove('scale-95', 'opacity-0');
+                    menu.classList.add('scale-100', 'opacity-100');
+                }, 10);
+            } else {
+                closeSettingsMenu();
+            }
+        }
+
+        function closeSettingsMenu() {
+            const menu = document.getElementById('settingsDropdownMenu');
+            if (menu) {
+                menu.classList.remove('scale-100', 'opacity-100');
+                menu.classList.add('scale-95', 'opacity-0');
+                setTimeout(() => menu.classList.add('hidden'), 150);
+            }
+        }
+
+        document.addEventListener('click', (e) => {
+            const btn = document.getElementById('settingsBtn');
+            const menu = document.getElementById('settingsDropdownMenu');
+            if (btn && menu && !btn.contains(e.target) && !menu.contains(e.target)) {
+                closeSettingsMenu();
+            }
+        });
+
+        function openUserDescModal() {
+            closeSettingsMenu();
+            const modal = document.getElementById('userDescModal');
+            modal.classList.remove('hidden');
+            setTimeout(() => {
+                modal.classList.remove('opacity-0');
+                const card = modal.querySelector('.glass-card');
+                if (card) { card.classList.remove('scale-95'); card.classList.add('scale-100'); }
+            }, 10);
+        }
+
+        function closeUserDescModal() {
+            const modal = document.getElementById('userDescModal');
+            modal.classList.add('opacity-0');
+            const card = modal.querySelector('.glass-card');
+            if (card) { card.classList.remove('scale-100'); card.classList.add('scale-95'); }
+            setTimeout(() => modal.classList.add('hidden'), 200);
+        }
+
+        function openAboutMeModal() {
+            closeSettingsMenu();
+            const modal = document.getElementById('aboutMeModal');
+            modal.classList.remove('hidden');
+            setTimeout(() => {
+                modal.classList.remove('opacity-0');
+                const card = modal.querySelector('.glass-card');
+                if (card) { card.classList.remove('scale-95'); card.classList.add('scale-100'); }
+            }, 10);
+        }
+
+        function closeAboutMeModal() {
+            const modal = document.getElementById('aboutMeModal');
+            modal.classList.add('opacity-0');
+            const card = modal.querySelector('.glass-card');
+            if (card) { card.classList.remove('scale-100'); card.classList.add('scale-95'); }
+            setTimeout(() => modal.classList.add('hidden'), 200);
         }
     </script>
 
@@ -1162,6 +1296,156 @@
                 <button onclick="confirmCreateDbUser(event)" id="confirmCreateUserBtn" class="btn-action px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white text-xs font-bold shadow-lg glow-emerald transition flex items-center gap-2">
                     <i class="fa-solid fa-user-plus text-xs"></i>
                     <span>OK</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Benutzerbeschreibung Modal (user_desc_screen.dart) -->
+    <div id="userDescModal" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-md hidden opacity-0 transition-all duration-200 p-4">
+        <div class="glass-card rounded-2xl border border-purple-500/40 w-full max-w-2xl p-6 space-y-6 shadow-2xl glow-pironman transform scale-95 transition-all duration-200 max-h-[90vh] overflow-y-auto">
+            <div class="flex items-center justify-between border-b border-slate-800 pb-4">
+                <div class="flex items-center space-x-3">
+                    <div class="w-10 h-10 rounded-xl bg-purple-500/20 border border-purple-500/40 text-purple-300 flex items-center justify-center">
+                        <i class="fa-solid fa-book-open text-lg"></i>
+                    </div>
+                    <div>
+                        <h3 class="text-lg font-bold text-white flex items-center gap-2">
+                            <span>Benutzerbeschreibung</span>
+                            <span class="text-[10px] font-mono px-2 py-0.5 rounded bg-purple-950 text-purple-300 border border-purple-800">user_desc_screen.dart</span>
+                        </h3>
+                        <p class="text-xs text-slate-400">Anleitung & Funktionsübersicht von Pi Deployer & Migrator</p>
+                    </div>
+                </div>
+                <button onclick="closeUserDescModal()" class="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white flex items-center justify-center transition">
+                    <i class="fa-solid fa-xmark text-sm"></i>
+                </button>
+            </div>
+
+            <div class="space-y-4 text-xs text-slate-300 leading-relaxed">
+                <div class="bg-slate-950/60 p-4 rounded-xl border border-slate-800 space-y-2">
+                    <h4 class="font-bold text-emerald-400 flex items-center gap-2 text-sm">
+                        <i class="fa-solid fa-wand-magic-sparkles"></i> Zweck der Anwendung
+                    </h4>
+                    <p>
+                        Der <strong>Raspberry Pi 5 Deployer & Migrator</strong> ist ein spezialisiertes Werkzeug zur vollautomatischen Bereitstellung und Migration von Laravel-Anwendungen auf einem Raspberry Pi 5 (z.B. Pironman 16GB Edition).
+                    </p>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-3 font-mono text-[11px]">
+                    <div class="p-3 bg-slate-950/80 rounded-xl border border-slate-800 space-y-1">
+                        <span class="text-purple-400 font-bold">1. System-Check & Rechte</span>
+                        <p class="text-slate-400">Prüft Schreibrechte (0775 / www-data) für <code class="text-emerald-300">storage</code> und <code class="text-emerald-300">bootstrap/cache</code>.</p>
+                    </div>
+                    <div class="p-3 bg-slate-950/80 rounded-xl border border-slate-800 space-y-1">
+                        <span class="text-cyan-400 font-bold">2. GitHub Code Sync</span>
+                        <p class="text-slate-400">Führt automatische Code-Updates von GitHub durch (<code class="text-cyan-300">git pull origin main</code>).</p>
+                    </div>
+                    <div class="p-3 bg-slate-950/80 rounded-xl border border-slate-800 space-y-1">
+                        <span class="text-purple-400 font-bold">3. .env & Datenbank</span>
+                        <p class="text-slate-400">Verwaltet Zugangsdaten, prüft Verbindungen und erstellt Datenbanken automatisch.</p>
+                    </div>
+                    <div class="p-3 bg-slate-950/80 rounded-xl border border-slate-800 space-y-1">
+                        <span class="text-indigo-400 font-bold">4. Composer Vendor Packages</span>
+                        <p class="text-slate-400">Generiert ARM64-optimierte PHP-Pakete (<code class="text-indigo-300">composer install --no-dev</code>) und baut Vite/NPM Assets.</p>
+                    </div>
+                    <div class="p-3 bg-slate-950/80 rounded-xl border border-slate-800 space-y-1">
+                        <span class="text-amber-400 font-bold">5. Migrations & Seeds</span>
+                        <p class="text-slate-400">Führt Datenbank-Tabellen-Migrationen (<code class="text-amber-300">artisan migrate --force</code>) und Seeders aus.</p>
+                    </div>
+                    <div class="p-3 bg-slate-950/80 rounded-xl border border-slate-800 space-y-1">
+                        <span class="text-emerald-400 font-bold">6. Speed Caches & Nginx</span>
+                        <p class="text-slate-400">Generiert Route-/Config-Caches und maßgeschneiderte Nginx Server-Blocks mit SSL.</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="flex justify-end pt-2 border-t border-slate-800">
+                <button onclick="closeUserDescModal()" class="btn-action px-5 py-2 rounded-xl bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 border border-purple-500/40 text-xs font-bold">
+                    Schließen
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Über Mich Modal (about_me.dart) -->
+    <div id="aboutMeModal" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-md hidden opacity-0 transition-all duration-200 p-4">
+        <div class="glass-card rounded-2xl border border-emerald-500/40 w-full max-w-2xl p-6 space-y-6 shadow-2xl glow-emerald transform scale-95 transition-all duration-200 max-h-[90vh] overflow-y-auto">
+            <div class="flex items-center justify-between border-b border-slate-800 pb-4">
+                <div class="flex items-center space-x-3">
+                    <div class="w-10 h-10 rounded-xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 flex items-center justify-center">
+                        <i class="fa-solid fa-user-astronaut text-lg"></i>
+                    </div>
+                    <div>
+                        <h3 class="text-lg font-bold text-white flex items-center gap-2">
+                            <span>Über Mich & Co-Pilot</span>
+                            <span class="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-800">about_me.dart</span>
+                        </h3>
+                        <p class="text-xs text-slate-400">Personalien & AI Pair Programming Assistent</p>
+                    </div>
+                </div>
+                <button onclick="closeAboutMeModal()" class="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white flex items-center justify-center transition">
+                    <i class="fa-solid fa-xmark text-sm"></i>
+                </button>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <!-- Developer Card: Robert Hofer -->
+                <div class="bg-slate-950/80 p-5 rounded-2xl border border-purple-500/30 space-y-3 relative overflow-hidden">
+                    <div class="w-12 h-12 rounded-xl bg-gradient-to-tr from-purple-600 to-indigo-500 flex items-center justify-center text-white text-xl font-bold shadow-lg">
+                        RH
+                    </div>
+                    <div>
+                        <h4 class="text-base font-bold text-white flex items-center gap-2">
+                            <span>Robert Hofer</span>
+                            <span class="text-[10px] px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 font-semibold border border-purple-500/30">Developer</span>
+                        </h4>
+                        <p class="text-xs text-slate-400 flex items-center gap-1.5 mt-0.5">
+                            <i class="fa-solid fa-location-dot text-purple-400"></i> Zürich, Schweiz
+                        </p>
+                    </div>
+                    <div class="space-y-1.5 pt-2 border-t border-slate-900 text-xs font-mono">
+                        <div class="flex items-center gap-2 text-slate-300">
+                            <i class="fa-regular fa-envelope text-purple-400"></i>
+                            <a href="mailto:robert.hofer.zuerich@bluewin.ch" class="hover:underline text-purple-300 text-[11px] truncate">robert.hofer.zuerich@bluewin.ch</a>
+                        </div>
+                        <div class="flex items-center gap-2 text-slate-400 text-[11px]">
+                            <i class="fa-solid fa-code text-emerald-400"></i>
+                            <span>Laravel, PHP 8.4, Raspberry Pi 5</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- AI Assistant Card: Antigravity AI -->
+                <div class="bg-slate-950/80 p-5 rounded-2xl border border-emerald-500/30 space-y-3 relative overflow-hidden">
+                    <div class="w-12 h-12 rounded-xl bg-gradient-to-tr from-emerald-500 via-teal-500 to-cyan-500 flex items-center justify-center text-slate-950 text-xl font-bold shadow-lg glow-emerald">
+                        <i class="fa-solid fa-atom text-slate-950"></i>
+                    </div>
+                    <div>
+                        <h4 class="text-base font-bold text-white flex items-center gap-2">
+                            <span>Antigravity AI</span>
+                            <span class="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-semibold border border-emerald-500/30">AI Assistant</span>
+                        </h4>
+                        <p class="text-xs text-slate-400 flex items-center gap-1.5 mt-0.5">
+                            <i class="fa-solid fa-brain text-emerald-400"></i> Google DeepMind Team
+                        </p>
+                    </div>
+                    <div class="space-y-1.5 pt-2 border-t border-slate-900 text-xs font-mono">
+                        <div class="flex items-center gap-2 text-slate-300 text-[11px]">
+                            <i class="fa-solid fa-robot text-emerald-400"></i>
+                            <span>Pair Programming Co-Pilot</span>
+                        </div>
+                        <div class="flex items-center gap-2 text-slate-400 text-[11px]">
+                            <i class="fa-solid fa-wand-magic-sparkles text-cyan-400"></i>
+                            <span>Advanced Agentic Coding</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="flex justify-end pt-2 border-t border-slate-800">
+                <button onclick="closeAboutMeModal()" class="btn-action px-5 py-2 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 text-xs font-bold">
+                    Schließen
                 </button>
             </div>
         </div>

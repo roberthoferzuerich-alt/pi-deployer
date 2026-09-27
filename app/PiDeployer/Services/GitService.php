@@ -74,8 +74,17 @@ class GitService
         }
 
         $base = $validated['path'];
-        $this->ensureSafeDirectory($base);
         $targetBranch = $branch ?? config('pi-deployer.git.default_branch', 'main');
+
+        if (! is_dir($base.DIRECTORY_SEPARATOR.'.git')) {
+            return [
+                'success' => false,
+                'branch' => $targetBranch,
+                'output' => "Kein Git-Repository im Zielpfad ({$base}) gefunden (.git Ordner fehlt). Bitte klone dein Repository zuerst in diesen Ordner (z.B. git clone <repo-url> {$base}).",
+            ];
+        }
+
+        $this->ensureSafeDirectory($base);
         $output = [];
 
         if ($hardReset) {
