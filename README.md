@@ -7,6 +7,8 @@
 
 Ein hochmoderner, automatisierter Laravel Migrations- & Deployment-Assistent für den **Raspberry Pi 5 (Pironman 16GB Edition)** und lokale Entwicklungs- / Serverumgebungen.
 
+![Pi Deployer & Migrator Dashboard](docs/dashboard.png)
+
 ---
 
 ## 🗺️ System-Architektur & Workflow
